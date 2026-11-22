@@ -1,0 +1,99 @@
+
+name: Deploy mi_foro_usuarios to EC2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-mi-foro-usuarios-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy mi_foro_usuarios through SSM
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      IMAGE_TAG: usuarios-${{ github.sha }}
+
+    steps:
+      - name: Check out deployment scripts
+        uses: actions/checkout@v4
+
+      - name: Validate deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          [[ -n "$ECR_REPOSITORY" ]] || {
+            echo "::error::Set the GitHub Actions variable ECR_REPOSITORY."
+            exit 1
+          }
+
+          [[ "$EC2_INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]] || {
+            echo "::error::Set EC2_INSTANCE_ID to a valid EC2 instance ID."
+            exit 1
+          }
+
+          [[ "$IMAGE_TAG" =~ ^usuarios-[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
+            echo "::error::Invalid ECR image tag."
+            exit 1
+          }
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Verify image exists in ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+
+          image_digest="$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$IMAGE_TAG" \
+            --region "$AWS_REGION" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+
+          [[ -n "$image_digest" && "$image_digest" != "None" ]] || {
+            echo "::error::The requested image tag was not found in ECR."
+            exit 1
+          }
+
+          IMAGE_URI="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Deploy on EC2 through SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bash ec2/deploy-to-instance.sh \
+            "$EC2_INSTANCE_ID" \
+            "$AWS_REGION" \
+            second \
+            ec2/deploy-api.sh \
+            --image "$IMAGE_URI" \
+            --host-port 8081 \
+            --container-port 8081 \
+            --secret-id mi-foro/oracle \
+            --secret-env-map 'DB_USERNAME=DB_USERNAME,DB_PASSWORD=DB_PASSWORD,DB_URL=DB_URL' \
+            --second-secret-id mi-foro/jwt \
+            --second-secret-env-map 'JWT_SECRET=JWT_SECRET,JWT_ISSUER=JWT_ISSUER,JWT_AUDIENCE=JWT_AUDIENCE' \
+            --wallet-bucket mi-foro-oracle-wallet-133749977543 \
+            --wallet-key oracle-wallet/Wallet_MIBD.zip \
+            --wallet-mount-path /run/oracle-wallet
