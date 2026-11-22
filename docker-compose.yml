@@ -1,0 +1,18 @@
+
+services:
+  mi_foro_usuarios:
+    image: mi-foro-usuarios:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    env_file:
+      - .env
+    environment:
+      DB_URL: "jdbc:oracle:thin:@mibd_high?TNS_ADMIN=/run/oracle-wallet"
+    volumes:
+      - type: bind
+        source: ${ORACLE_WALLET_PATH:?Set ORACLE_WALLET_PATH to the local Oracle wallet directory}
+        target: /run/oracle-wallet
+        read_only: true

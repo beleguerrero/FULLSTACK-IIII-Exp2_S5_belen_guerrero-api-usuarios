@@ -1,0 +1,15 @@
+.env
+.env.*
+target/
+.git/
+
+# Oracle wallet and local TNS configuration
+**/wallet/
+**/wallet*/
+**/Wallet_*/
+**/cwallet.sso
+**/ewallet.*
+**/*.p12
+**/*.jks
+**/tnsnames.ora
+**/sqlnet.ora
